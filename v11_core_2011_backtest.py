@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-V11-Core 2011 Euro Debt / US Credit Downgrade Shock Backtest R7
+V11-Core 2011 Euro Debt / US Credit Downgrade Shock Backtest R8
 
 Goal:
 - Test whether V11 can switch from 452 to 514 after the 2011 Euro debt crisis / US credit downgrade shock starts spreading into global risk assets.
@@ -159,7 +159,7 @@ def score_defensive_strength(df: pd.DataFrame) -> pd.Series:
 
 def compute_r_mode(df: pd.DataFrame, components: pd.DataFrame) -> pd.DataFrame:
     """
-    Stricter V11 R-mode rules plus R4 V-shaped rebound fast lane and R7 stricter medium repair lane.
+    Stricter V11 R-mode rules plus R4 V-shaped rebound fast lane and R8 stricter medium repair lane.
 
     R2 fixed:
     - 433 triggered too early during bear-market rallies.
@@ -248,15 +248,22 @@ def compute_r_mode(df: pd.DataFrame, components: pd.DataFrame) -> pd.DataFrame:
         "fast_vix_below_35",
     ]].sum(axis=1)
     conds["fast_release_confirm"] = conds["fast_panic_regime"] & (conds["fast_count"] >= 5)
+    # R8: in 2011-style whipsaw crises, a fast lane may release defense to 452,
+    # but it should not jump to 433 unless credit, momentum and total risk are fully repaired.
     conds["fast_r_confirm"] = (
         conds["fast_panic_regime"]
         & (conds["fast_count"] >= 6)
-        & (components["credit_proxy_score"] < 12)
+        & (components["credit_proxy_score"] < 8)
+        & (components["market_momentum_score"] < 15)
+        & (components["total_score"] <= 30)
+        & (qqq > ma(qqq, 60))
+        & (soxx > ma(soxx, 60))
+        & (credit > ma(credit, 60))
     )
 
-    # R7: stricter medium repair lane.
+    # R8: stricter medium repair lane.
     # For 2018 Q4-like corrections: VIX and score were elevated, but not a full 2020-style panic.
-    # R7 tightens R6 to avoid 2022-style bear-market rallies: momentum repair is mandatory, not just part of a score count.
+    # R8 tightens R6 to avoid 2022-style bear-market rallies: momentum repair is mandatory, not just part of a score count.
     recent_vix_peak_120d = vix.rolling(120, min_periods=20).max()
     recent_score_peak_120d = components["total_score"].rolling(120, min_periods=20).max()
     conds["medium_repair_regime"] = (
@@ -284,9 +291,9 @@ def compute_r_mode(df: pd.DataFrame, components: pd.DataFrame) -> pd.DataFrame:
         "medium_qqq_20d_return_positive",
     ]].sum(axis=1)
 
-    # R7 stricter medium lane:
+    # R8 stricter medium lane:
     # R6 allowed release when the count reached 7/9. In 2022 this allowed a bear-market rally
-    # to pass even while market_momentum_score was still weak. R7 makes the key repair
+    # to pass even while market_momentum_score was still weak. R8 makes the key repair
     # conditions mandatory. This should keep the 2018 Q1 repair path, but block 2022-08.
     conds["medium_release_confirm"] = (
         conds["medium_repair_regime"]
@@ -297,6 +304,21 @@ def compute_r_mode(df: pd.DataFrame, components: pd.DataFrame) -> pd.DataFrame:
         & conds["medium_soxx_above_ma60"]
         & conds["medium_credit_above_ma60"]
         & conds["medium_qqq_20d_return_positive"]
+    )
+
+    # R8: post-stress repair lane.
+    # If the model has been defensive for a long time and broad conditions repair,
+    # allow 514 -> 452 even after the original medium-regime lookback has expired.
+    # This is designed for 2012-style repair after repeated Euro-debt shocks.
+    conds["post_repair_confirm"] = (
+        (components["total_score"] <= 45)
+        & (components["market_momentum_score"] < 20)
+        & (components["credit_proxy_score"] < 12)
+        & (vix < 25)
+        & (qqq > ma(qqq, 60))
+        & (soxx > ma(soxx, 60))
+        & (credit > ma(credit, 60))
+        & (safe_pct_change(qqq, 20) > 0)
     )
 
     return conds
@@ -328,6 +350,7 @@ def apply_cooldown(weekly: pd.DataFrame, cooldown_weeks: int = 3) -> pd.DataFram
     fast_release_pending_count = 0
     fast_r_pending_count = 0
     medium_release_pending_count = 0
+    post_repair_pending_count = 0
 
     for _, row in out.iterrows():
         raw = row["raw_mode"]
@@ -337,6 +360,7 @@ def apply_cooldown(weekly: pd.DataFrame, cooldown_weeks: int = 3) -> pd.DataFram
         fast_release_confirm = bool(row.get("fast_release_confirm", False))
         fast_r_confirm = bool(row.get("fast_r_confirm", False))
         medium_release_confirm = bool(row.get("medium_release_confirm", False))
+        post_repair_confirm = bool(row.get("post_repair_confirm", False))
 
         reason = "維持原模式"
 
@@ -349,6 +373,7 @@ def apply_cooldown(weekly: pd.DataFrame, cooldown_weeks: int = 3) -> pd.DataFram
             fast_release_pending_count = 0
             fast_r_pending_count = 0
             medium_release_pending_count = 0
+            post_repair_pending_count = 0
             reason = "風險分數>=75，立即切514防守"
 
         elif current == "514" and fast_release_confirm:
@@ -365,7 +390,7 @@ def apply_cooldown(weekly: pd.DataFrame, cooldown_weeks: int = 3) -> pd.DataFram
                 reason = f"快速回攻第{fast_release_pending_count}週觀察，暫維持514"
 
         elif current == "514" and medium_release_confirm:
-            # R7 stricter medium lane: slower than 2020 fast lane, but avoids weak-momentum bear rallies.
+            # R8 stricter medium lane: slower than 2020 fast lane, but avoids weak-momentum bear rallies.
             pending = None
             pending_count = 0
             r_pending_count = 0
@@ -374,9 +399,23 @@ def apply_cooldown(weekly: pd.DataFrame, cooldown_weeks: int = 3) -> pd.DataFram
                 current = "452"
                 release_pending_count = 0
                 fast_release_pending_count = 0
-                reason = "R7中型修復通道連續2週成立，514→452"
+                reason = "R8中型修復通道連續2週成立，514→452"
             else:
-                reason = f"R7中型修復通道第{medium_release_pending_count}週觀察，暫維持514"
+                reason = f"R8中型修復通道第{medium_release_pending_count}週觀察，暫維持514"
+
+        elif current == "514" and post_repair_confirm:
+            pending = None
+            pending_count = 0
+            r_pending_count = 0
+            post_repair_pending_count += 1
+            if post_repair_pending_count >= 3:
+                current = "452"
+                release_pending_count = 0
+                fast_release_pending_count = 0
+                medium_release_pending_count = 0
+                reason = "R8長期防守後修復條件連續3週成立，514→452"
+            else:
+                reason = f"R8長期修復第{post_repair_pending_count}週觀察，暫維持514"
 
         elif current == "514" and r_confirm:
             release_pending_count = 0
@@ -510,7 +549,7 @@ def make_switch_log(weekly: pd.DataFrame) -> pd.DataFrame:
         "total_score", "final_mode", "raw_mode", "r_count", "r_watch", "r_confirm",
         "r_credit_veto", "r_momentum_veto", "r_score_veto", "release_confirm",
         "fast_count", "fast_release_confirm", "fast_r_confirm",
-        "medium_repair_regime", "medium_count", "medium_release_confirm",
+        "medium_repair_regime", "medium_count", "medium_release_confirm", "post_repair_confirm",
         "release_qqq_above_ma60", "release_soxx_above_ma60", "release_credit_above_ma60",
         "market_momentum_score", "credit_proxy_score", "breadth_score", "vix_score",
         "defensive_strength_score", "mode_reason",
@@ -531,7 +570,7 @@ def make_summary(weekly: pd.DataFrame, switch_log: pd.DataFrame, start: str, end
         return pd.Timestamp(x).strftime("%Y-%m-%d")
 
     lines = []
-    lines.append("# V11-Core 2011 Euro Debt / US Credit Downgrade Shock Backtest R7 Summary")
+    lines.append("# V11-Core 2011 Euro Debt / US Credit Downgrade Shock Backtest R8 Summary")
     lines.append("")
     lines.append(f"Period: {start} to {end}")
     lines.append("")
@@ -563,7 +602,7 @@ def make_summary(weekly: pd.DataFrame, switch_log: pd.DataFrame, start: str, end
     lines.append("- Good: R/433 does not trigger on every short bear-market / correction bounce.")
     lines.append("- Revised R filter: 433 requires R>=4/5, total_score<=35, credit_proxy_score<12, market_momentum_score<20, and 3 consecutive weekly confirmations by default.")
     lines.append("- R5 fast lane: after a true panic regime, if VIX cools sharply and QQQ/SOXX/credit regain 20D trends, 514 can release to 452 earlier; 433 still needs extra confirmation.")
-    lines.append("- R6 medium repair lane: 514 can release to 452 only after medium repair conditions hold for 2 weeks; this test checks whether 2011-2012 risk-off rebounds are filtered out.")
+    lines.append("- R8 medium/post-stress repair lane: 514 can release to 452 only after medium repair conditions hold for 2 weeks; this test checks whether 2011-2012 risk-off rebounds are filtered out.")
     lines.append("- Good: Once capital returns, the model can leave 514 instead of staying permanently defensive.")
     lines.append("- Bad: Model stays 452 through the main drawdown.")
     lines.append("- Bad: Model flips between 452/514/433 too often.")
@@ -571,7 +610,7 @@ def make_summary(weekly: pd.DataFrame, switch_log: pd.DataFrame, start: str, end
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run V11-Core 2011 Euro Debt / US Credit Downgrade Shock Backtest R7.")
+    parser = argparse.ArgumentParser(description="Run V11-Core 2011 Euro Debt / US Credit Downgrade Shock Backtest R8.")
     parser.add_argument("--start", default=DEFAULT_START)
     parser.add_argument("--end", default=DEFAULT_END)
     # Revised after first backtest: 433 should require more confirmation.

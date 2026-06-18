@@ -1,4 +1,4 @@
-# V11-Core 2011 Euro Debt / US Credit Downgrade Shock Backtest R7
+# V11-Core 2011 Euro Debt / US Credit Downgrade Shock Backtest R8
 
 這是 V11-Core 的 2011～2012 事件型回測。
 
@@ -29,16 +29,16 @@ output/v11_core_2011_switch_log.csv
 output/v11_core_2011_summary.md
 ```
 
-## R7 核心邏輯
+## R8 核心邏輯
 
 - 452：平常作戰 / 中性偏進攻底盤
 - 514：危機升溫 / 防守避震
 - 433：R 模式確認 / 防守反擊
 
-R7 包含：
+R8 包含：
 
 - R3 慢熊防守邏輯
 - R5 急殺 V 型快速回攻通道
-- R7 更嚴格的中型修復通道
+- R8 更嚴格的中型修復通道
 
-這一關用來確認：R7 在 2011～2012 這種「多波段風險衝擊」裡，會不會太慢、太快，或亂切模式。
+這一關用來確認：R8 在 2011～2012 這種「多波段風險衝擊」裡，會不會太慢、太快，或亂切模式。
